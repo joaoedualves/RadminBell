@@ -17,6 +17,15 @@ using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using System.Reflection;
+
+// informacoes de versao do exe (Propriedades > Detalhes)
+[assembly: AssemblyProduct("RadminBell - Private Bloodborne Co-op Server")]
+[assembly: AssemblyCompany("RadminBell")]
+[assembly: AssemblyCopyright("Copyright (c) 2026 RadminBell - MIT License")]
+[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyInformationalVersion("1.0")]
 
 namespace RadminBell
 {
@@ -287,13 +296,6 @@ namespace RadminBell
             var b = new byte[hex.Length / 2];
             for (int i = 0; i < b.Length; i++) b[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
             return Encoding.Unicode.GetString(ProtectedData.Unprotect(b, null, DataProtectionScope.CurrentUser));
-        }
-        // tira o "veio da internet" (Zone.Identifier) dos arquivos do servidor
-        [DllImport("kernel32", CharSet = CharSet.Unicode)] static extern bool DeleteFile(string p);
-        public static void Unblock(string dir)
-        {
-            if (!Directory.Exists(dir)) return;
-            foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) DeleteFile(f + ":Zone.Identifier");
         }
     }
 

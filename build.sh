@@ -11,7 +11,7 @@ build() { # out manifest files...
   out=$1; man=$2; shift 2
   { echo /nologo /noconfig /nostdlib /target:winexe /platform:anycpu /optimize+ /langversion:7.3 /utf8output
     echo /win32icon:icon.ico; echo /win32manifest:$man; echo /resource:logo.png,logo.png
-    for a in mscorlib System System.Core System.Windows.Forms System.Drawing System.Security System.Web.Extensions Microsoft.CSharp System.IO.Compression System.IO.Compression.FileSystem System.Net.Http; do echo "/r:\"$R/$a.dll\""; done
+    for a in mscorlib System System.Core System.Windows.Forms System.Drawing System.Security System.Web.Extensions Microsoft.CSharp; do echo "/r:\"$R/$a.dll\""; done
     echo "/out:\"$out\""; for f in "$@"; do echo "$f"; done; } > build.rsp
   MSYS2_ARG_CONV_EXCL='*' dotnet "$CSC" @build.rsp || exit 1
 }

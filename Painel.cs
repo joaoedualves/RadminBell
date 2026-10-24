@@ -1,20 +1,25 @@
 // 01.RadminBell.exe - painel do servidor de co-op na rede do Radmin VPN.
 // Sem parametro = painel. --start / --stop = sem janela (inicio com o Windows). --setup (admin) = firewall.
 // O servidor em si (shadnet + BBSC-GameServer) e o oficial do BBSC, de CLS_AMG, na pasta server ao lado do exe
-// (se faltar, e baixado do GitHub dele).
+// (vem junto no zip; o painel nao baixa nada).
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.ComponentModel;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
-using System.Net;
+using System.Reflection;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Win32;
+
+[assembly: AssemblyTitle("RadminBell - server panel")]
+[assembly: AssemblyDescription("Starts/stops the official BBSC co-op server on a Radmin VPN network")]
 
 namespace RadminBell
 {
@@ -22,40 +27,16 @@ namespace RadminBell
     {
         public const string Rule = "RadminBell";
         public static readonly string[] Programs = { "shadnet.exe", "BBSC-GameServer.exe" };
-        const string Url = "https://github.com/CLSAMG22/BBSC/releases/download/v0.0.2/BBSC-0.0.2-Server.zip";
-        const string Sha = "54B0BD1B608B869F76C868EF534DF6C019ED8C4B82B49EE7DC7FC3ACF4DB6213";
+        public const string Download = "https://github.com/CLSAMG22/BBSC/releases";
         public static bool Present { get { return Programs.All(p => File.Exists(Path.Combine(Paths.Server, p))); } }
 
-        // servidor oficial na pasta server; se faltar, baixa (tem que ser exatamente o arquivo publicado)
+        // servidor oficial na pasta server ao lado do exe (vem no zip); se faltar, abre a pagina do BBSC
         public static string Install()
         {
-            if (Present) { Util.Unblock(Paths.Server); return null; }
-            string zip = Path.Combine(Paths.Data, "BBSC-0.0.2-Server.zip"), tmp = Path.Combine(Paths.Data, "baixando");
-            try
-            {
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-                using (var wc = new WebClient()) wc.DownloadFile(Url, zip);
-                string h; using (var sha = SHA256.Create()) using (var fs = File.OpenRead(zip)) h = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
-                if (h != Sha) return L.T("O servidor baixado não é o oficial (arquivo diferente). Tente de novo mais tarde.",
-                                         "The downloaded server is not the official one (different file). Try again later.");
-                if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
-                ZipFile.ExtractToDirectory(zip, tmp);
-                var src = Directory.GetDirectories(tmp, "server", SearchOption.AllDirectories).FirstOrDefault();
-                if (src == null) return L.T("O pacote do servidor veio sem a pasta server.", "The server package has no server folder.");
-                if (Directory.Exists(Paths.Server)) Directory.Delete(Paths.Server, true);
-                Directory.Move(src, Paths.Server);
-                Util.Unblock(Paths.Server);
-                return null;
-            }
-            catch (Exception e)
-            {
-                return L.T("Não consegui baixar o servidor oficial do BBSC (precisa de internet).", "Could not download the official BBSC server (internet needed).") + "\n" + e.Message;
-            }
-            finally
-            {
-                try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
-                try { File.Delete(zip); } catch { }
-            }
+            if (Present) return null;
+            Util.OpenUrl(Download);
+            return L.T("Falta a pasta server (servidor oficial do BBSC) ao lado do RadminBell. Abri a página: baixe o BBSC-0.0.2-Server.zip e coloque a pasta server dele aqui.",
+                       "The server folder (official BBSC server) is missing next to RadminBell. I opened the page: download BBSC-0.0.2-Server.zip and put its server folder here.");
         }
 
         // regra por programa (TCP e UDP): so quem esta na rede Radmin (26.x) ou na sua casa entra;
@@ -109,6 +90,37 @@ namespace RadminBell
             foreach (var n in new[] { "shadnet", "BBSC-GameServer" })
                 foreach (var p in Process.GetProcessesByName(n)) { try { p.Kill(); p.WaitForExit(3000); } catch { } p.Dispose(); }
         }
+        // shadnet com saida direto no arquivo de log (handle herdado): continua rodando com o painel fechado
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct StartupInfo
+        {
+            public int cb; public string reserved, desktop, title;
+            public int x, y, w, h, xChars, yChars, fill, flags; public short show, reserved2; public IntPtr reserved3, stdIn, stdOut, stdErr;
+        }
+        [StructLayout(LayoutKind.Sequential)] struct ProcInfo { public IntPtr process, thread; public int pid, tid; }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, int flags, IntPtr env, string dir, ref StartupInfo si, out ProcInfo pi);
+        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+        [DllImport("kernel32.dll")] static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
+
+        static void StartShadnet(string log)
+        {
+            Environment.SetEnvironmentVariable("SHADNET_BLOODBORNE_SEAMLESS_COOP", "1");
+            Environment.SetEnvironmentVariable("SHADNET_BLOODBORNE_RE_TRACE", "1");
+            string exe = Path.Combine(Paths.Server, "shadnet.exe");
+            using (var fs = new FileStream(log, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+            {
+                IntPtr h = fs.SafeFileHandle.DangerousGetHandle();
+                SetHandleInformation(h, 1, 1);   // HANDLE_FLAG_INHERIT
+                var si = new StartupInfo { flags = 0x100, stdOut = h, stdErr = h };   // STARTF_USESTDHANDLES
+                si.cb = Marshal.SizeOf(si);
+                ProcInfo pi;
+                if (!CreateProcess(exe, new StringBuilder("\"" + exe + "\""), IntPtr.Zero, IntPtr.Zero, true, 0x08000000, IntPtr.Zero, Paths.Server, ref si, out pi))   // CREATE_NO_WINDOW
+                    throw new Win32Exception();
+                CloseHandle(pi.thread); CloseHandle(pi.process);
+            }
+        }
+
         public static bool Answering(string ip) { return !string.IsNullOrEmpty(ip) && Util.HttpOk("http://" + ip + ":31315/status", 2000); }
 
         public static string Start(string ip)
@@ -120,7 +132,7 @@ namespace RadminBell
             {
                 try
                 {
-                    var p = Process.Start(new ProcessStartInfo(Application.ExecutablePath, "--setup") { Verb = "runas", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden });
+                    var p = Process.Start(new ProcessStartInfo(Application.ExecutablePath, "--setup") { Verb = "runas", UseShellExecute = true });
                     p.WaitForExit();
                 }
                 catch { return L.T("Precisa do 'Sim' no aviso do Windows (firewall) na 1ª vez.", "Windows needs a 'Yes' (firewall) the first time."); }
@@ -128,9 +140,8 @@ namespace RadminBell
             Stop();
             Directory.CreateDirectory(Paths.Logs);
             string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            // via cmd: o log do shadnet vai pra arquivo e ele continua rodando com o painel fechado
-            Process.Start(new ProcessStartInfo("cmd.exe", "/c set SHADNET_BLOODBORNE_SEAMLESS_COOP=1& set SHADNET_BLOODBORNE_RE_TRACE=1& .\\shadnet.exe > \"logs\\shadnet-" + stamp + ".log\" 2>&1")
-            { WorkingDirectory = Paths.Server, UseShellExecute = false, CreateNoWindow = true }).Dispose();
+            try { StartShadnet(Path.Combine(Paths.Logs, "shadnet-" + stamp + ".log")); }
+            catch (Exception e) { return L.T("Não consegui abrir o shadnet.exe: ", "Could not start shadnet.exe: ") + e.Message; }
             Thread.Sleep(2000);
             Process.Start(new ProcessStartInfo(Path.Combine(Paths.Server, "BBSC-GameServer.exe"),
                 "--shadnet " + ip + " --host 0.0.0.0 --advertise " + ip + " --summon-interval 5 --no-playlog --log-dir \"" + Paths.Logs + "\"")
@@ -153,14 +164,6 @@ namespace RadminBell
             {
                 using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
                     if (value) k.SetValue(Rule, "\"" + Application.ExecutablePath + "\" --start"); else k.DeleteValue(Rule, false);
-                // tarefas agendadas das versoes .cmd
-                foreach (var t in new[] { "RadminBell", "BRHunt-Radmin" })
-                    try
-                    {
-                        using (var p = Process.Start(new ProcessStartInfo("schtasks.exe", "/Delete /TN \"" + t + "\" /F") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true }))
-                            p.WaitForExit(5000);
-                    }
-                    catch { }
             }
         }
     }

@@ -14,6 +14,10 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Reflection;
+
+[assembly: AssemblyTitle("RadminBell - Switch Server")]
+[assembly: AssemblyDescription("Points Seamless Co-op (BBSC) to a RadminBell server and back")]
 
 namespace RadminBell
 {
