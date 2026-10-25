@@ -1,5 +1,5 @@
 // 01.RadminBell.exe - painel do servidor de co-op na rede do Radmin VPN.
-// Sem parametro = painel. --start / --stop = sem janela (inicio com o Windows). --setup (admin) = firewall.
+// Sem parametro = painel. --stop = sem janela. --setup (admin) = firewall.
 // O servidor em si (shadnet + BBSC-GameServer) e o oficial do BBSC, de CLS_AMG, na pasta server ao lado do exe
 // (vem junto no zip; o painel nao baixa nada).
 using System;
@@ -35,8 +35,8 @@ namespace RadminBell
         {
             if (Present) return null;
             Util.OpenUrl(Download);
-            return L.T("Falta a pasta server (servidor oficial do BBSC) ao lado do RadminBell. Abri a página: baixe o BBSC-0.0.2-Server.zip e coloque a pasta server dele aqui.",
-                       "The server folder (official BBSC server) is missing next to RadminBell. I opened the page: download BBSC-0.0.2-Server.zip and put its server folder here.");
+            return L.T("Falta a pasta server (servidor oficial do BBSC) ao lado do RadminBell. A página do BBSC foi aberta: baixe o BBSC-0.0.2-Server.zip e coloque a pasta server dele aqui.",
+                       "The server folder (official BBSC server) is missing next to RadminBell. The BBSC page was opened: download BBSC-0.0.2-Server.zip and put its server folder here.");
         }
 
         // regra por programa (TCP e UDP): so quem esta na rede Radmin (26.x) ou na sua casa entra;
@@ -90,35 +90,13 @@ namespace RadminBell
             foreach (var n in new[] { "shadnet", "BBSC-GameServer" })
                 foreach (var p in Process.GetProcessesByName(n)) { try { p.Kill(); p.WaitForExit(3000); } catch { } p.Dispose(); }
         }
-        // shadnet com saida direto no arquivo de log (handle herdado): continua rodando com o painel fechado
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        struct StartupInfo
+        // shadnet sem janela; continua rodando com o painel fechado (sem log proprio: o shadnet nao tem opcao de log)
+        static void StartShadnet()
         {
-            public int cb; public string reserved, desktop, title;
-            public int x, y, w, h, xChars, yChars, fill, flags; public short show, reserved2; public IntPtr reserved3, stdIn, stdOut, stdErr;
-        }
-        [StructLayout(LayoutKind.Sequential)] struct ProcInfo { public IntPtr process, thread; public int pid, tid; }
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, int flags, IntPtr env, string dir, ref StartupInfo si, out ProcInfo pi);
-        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-        [DllImport("kernel32.dll")] static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
-
-        static void StartShadnet(string log)
-        {
-            Environment.SetEnvironmentVariable("SHADNET_BLOODBORNE_SEAMLESS_COOP", "1");
-            Environment.SetEnvironmentVariable("SHADNET_BLOODBORNE_RE_TRACE", "1");
-            string exe = Path.Combine(Paths.Server, "shadnet.exe");
-            using (var fs = new FileStream(log, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
-            {
-                IntPtr h = fs.SafeFileHandle.DangerousGetHandle();
-                SetHandleInformation(h, 1, 1);   // HANDLE_FLAG_INHERIT
-                var si = new StartupInfo { flags = 0x100, stdOut = h, stdErr = h };   // STARTF_USESTDHANDLES
-                si.cb = Marshal.SizeOf(si);
-                ProcInfo pi;
-                if (!CreateProcess(exe, new StringBuilder("\"" + exe + "\""), IntPtr.Zero, IntPtr.Zero, true, 0x08000000, IntPtr.Zero, Paths.Server, ref si, out pi))   // CREATE_NO_WINDOW
-                    throw new Win32Exception();
-                CloseHandle(pi.thread); CloseHandle(pi.process);
-            }
+            var psi = new ProcessStartInfo(Path.Combine(Paths.Server, "shadnet.exe")) { WorkingDirectory = Paths.Server, UseShellExecute = false, CreateNoWindow = true };
+            psi.EnvironmentVariables["SHADNET_BLOODBORNE_SEAMLESS_COOP"] = "1";
+            psi.EnvironmentVariables["SHADNET_BLOODBORNE_RE_TRACE"] = "1";
+            Process.Start(psi).Dispose();
         }
 
         public static bool Answering(string ip) { return !string.IsNullOrEmpty(ip) && Util.HttpOk("http://" + ip + ":31315/status", 2000); }
@@ -139,9 +117,8 @@ namespace RadminBell
             }
             Stop();
             Directory.CreateDirectory(Paths.Logs);
-            string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            try { StartShadnet(Path.Combine(Paths.Logs, "shadnet-" + stamp + ".log")); }
-            catch (Exception e) { return L.T("Não consegui abrir o shadnet.exe: ", "Could not start shadnet.exe: ") + e.Message; }
+            try { StartShadnet(); }
+            catch (Exception e) { return L.T("Não foi possível abrir o shadnet.exe: ", "Could not start shadnet.exe: ") + e.Message; }
             Thread.Sleep(2000);
             Process.Start(new ProcessStartInfo(Path.Combine(Paths.Server, "BBSC-GameServer.exe"),
                 "--shadnet " + ip + " --host 0.0.0.0 --advertise " + ip + " --summon-interval 5 --no-playlog --log-dir \"" + Paths.Logs + "\"")
@@ -153,18 +130,6 @@ namespace RadminBell
             }
             return L.T("Os programas abriram mas o servidor não respondeu - veja os logs (botão 'Abrir logs').",
                        "The programs started but the server did not answer - check the logs ('Open logs' button).");
-        }
-
-        // ligar sozinho ao entrar no Windows
-        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        public static bool AutoStart
-        {
-            get { using (var k = Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue(Rule) != null; }
-            set
-            {
-                using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
-                    if (value) k.SetValue(Rule, "\"" + Application.ExecutablePath + "\" --start"); else k.DeleteValue(Rule, false);
-            }
         }
     }
 
@@ -188,8 +153,8 @@ namespace RadminBell
             var openRadmin = new DarkButton { Text = L.T("Abrir Radmin VPN", "Open Radmin VPN"), Glyph = "", Location = new Point(pad, y), Size = new Size(w, D(44)) };
             openRadmin.Click += (s, e) =>
             {
-                if (!Radmin.Open()) Msg.Show(this, L.T("Radmin VPN não está instalado. Abri o site: instale e clique aqui de novo.",
-                                                     "Radmin VPN is not installed. I opened the website: install it and click here again."));
+                if (!Radmin.Open()) Msg.Show(this, L.T("Radmin VPN não está instalado. O site dele foi aberto: instale e clique aqui de novo.",
+                                                     "Radmin VPN is not installed. Its website was opened: install it and click here again."));
             };
             Controls.Add(openRadmin); y = openRadmin.Bottom + D(22);
 
@@ -229,12 +194,7 @@ namespace RadminBell
 
             var logs = new DarkButton { Text = L.T("Abrir logs", "Open logs"), Glyph = "", Style = BtnStyle.Outline, Font = Theme.Body(9), Location = new Point(pad, y), Size = new Size(w, D(36)) };
             logs.Click += (s, e) => { Directory.CreateDirectory(Paths.Logs); Process.Start("explorer.exe", "\"" + Paths.Logs + "\""); };
-            Controls.Add(logs); y = logs.Bottom + D(12);
-
-            var auto = new DarkCheck { Text = L.T("Ligar sozinho quando eu entrar no Windows", "Start by itself when I log into Windows"), Location = new Point(pad, y), Size = new Size(w, D(22)) };
-            try { auto.Checked = Server.AutoStart; } catch { }
-            auto.CheckedChanged += (s, e) => { try { Server.AutoStart = auto.Checked; } catch { } };
-            Controls.Add(auto); y = auto.Bottom + D(14);
+            Controls.Add(logs); y = logs.Bottom + D(14);
 
             var lang = new LinkText { Text = "Language / Idioma", Location = new Point(pad, y), Size = new Size(w, D(20)) };
             lang.Click += (s, e) =>
@@ -348,8 +308,8 @@ namespace RadminBell
             if (!st.Installed)
             {
                 Radmin.Open();
-                Msg.Show(this, L.T("Radmin VPN não está instalado. Abri o site: instale, crie a rede e clique em Ligar de novo.",
-                                   "Radmin VPN is not installed. I opened the website: install it, create the network and click Start again."));
+                Msg.Show(this, L.T("Radmin VPN não está instalado. O site dele foi aberto: instale, crie a rede e clique em Ligar de novo.",
+                                   "Radmin VPN is not installed. Its website was opened: install it, create the network and click Start again."));
                 return;
             }
             if (!st.PowerOn || !st.Ip.StartsWith("26."))
@@ -361,10 +321,10 @@ namespace RadminBell
             }
             string n = name.Text.Trim();
             if (st.LogFound && !st.Networks.Contains(n) &&
-                !Msg.Ask(this, L.T("Não achei a rede '" + n + "' no Radmin VPN. Crie ela (Rede > Criar rede) com EXATAMENTE este nome e senha, senão os amigos não entram.\n\nLigar mesmo assim?",
-                                   "I could not find the network '" + n + "' in Radmin VPN. Create it (Network > Create network) with EXACTLY this name and password, or your friends can't join.\n\nStart anyway?"),
+                !Msg.Ask(this, L.T("A rede '" + n + "' não foi encontrada no Radmin VPN. Crie ela (Rede > Criar rede) com EXATAMENTE este nome e senha, senão os amigos não entram.\n\nLigar mesmo assim?",
+                                   "The network '" + n + "' was not found in Radmin VPN. Create it (Network > Create network) with EXACTLY this name and password, or your friends can't join.\n\nStart anyway?"),
                          L.T("Ligar mesmo assim", "Start anyway"))) return;
-            busy = true; busyText = Server.Present ? L.T("Ligando...", "Starting...") : L.T("Baixando o servidor oficial do BBSC (1ª vez, ~45 MB)...", "Downloading the official BBSC server (first time, ~45 MB)...");
+            busy = true; busyText = L.T("Ligando...", "Starting...");
             start.Enabled = stop.Enabled = false; Cursor = Cursors.WaitCursor; Draw();
             string ip = st.Ip;
             Task.Run(() => Server.Start(ip)).ContinueWith(t =>
@@ -466,14 +426,7 @@ namespace RadminBell
             string a = args.Length > 0 ? args[0].ToLowerInvariant() : "";
             if (a == "--setup") { try { Server.SetupFirewall(); return 0; } catch { return 1; } }
             if (a == "--stop") { Server.Stop(); return 0; }
-            if (a == "--start")
-            {
-                // inicio com o Windows: espera o Radmin conectar
-                Thread.Sleep(30000);
-                string ip = "";
-                for (int i = 0; i < 60 && !(ip = Radmin.Read().Ip).StartsWith("26."); i++) Thread.Sleep(5000);
-                return Server.Start(ip) == null ? 0 : 1;
-            }
+            if (a == "--start") return 0;   // inicio com o Windows saiu; versao antiga pode ter deixado isso no logon
             using (var m = new Mutex(true, "RadminBell-Panel", out bool first))
             {
                 if (!first) return 0;

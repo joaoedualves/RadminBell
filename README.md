@@ -8,8 +8,8 @@ Source code of **RadminBell**: 2 small Windows apps to host your own private
   and the local subnet, generates the Radmin network name/password and copies an invite for friends.
 - `02.Switch Server.exe` (`Trocar.cs`): points your Seamless Co-op install to a RadminBell server
   (creates the game account on it and updates `account.dat` / the BBport launcher settings),
-  and switches back to your previous server. Runs as administrator.
-- `Common.cs`: shared code (dark theme, language EN/PT-BR, folders, Radmin VPN status, DPAPI, JSON).
+  and switches back to your previous server. Asks for administrator only if the Seamless Co-op folder is protected.
+- `Common.cs`: shared code (dark theme, language EN/PT-BR, folders, Radmin VPN status, JSON).
 
 The server itself is **not** part of this repository: it is the official, unchanged
 `BBSC-0.0.2-Server.zip` from the [BBSC v0.0.2 release](https://github.com/CLSAMG22/BBSC/releases).

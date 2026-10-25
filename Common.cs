@@ -1,5 +1,5 @@
 // RadminBell - parte comum dos 2 apps (painel e Switch Server): tema escuro, controles desenhados,
-// idioma, pastas, Radmin VPN (IP fixo, ligado/desligado, redes pelo service.log), DPAPI e JSON.
+// idioma, pastas, Radmin VPN (IP fixo, ligado/desligado, redes pelo service.log) e JSON.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -284,18 +284,6 @@ namespace RadminBell
         {
             var b = new byte[bytes]; using (var r = RandomNumberGenerator.Create()) r.GetBytes(b);
             return string.Concat(b.Select(x => x.ToString("x2")));
-        }
-        // mesmo formato do ConvertFrom-SecureString do PowerShell (DPAPI do usuario, texto UTF-16, hex)
-        public static string Protect(string s)
-        {
-            var enc = ProtectedData.Protect(Encoding.Unicode.GetBytes(s), null, DataProtectionScope.CurrentUser);
-            return string.Concat(enc.Select(x => x.ToString("x2")));
-        }
-        public static string Unprotect(string hex)
-        {
-            var b = new byte[hex.Length / 2];
-            for (int i = 0; i < b.Length; i++) b[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
-            return Encoding.Unicode.GetString(ProtectedData.Unprotect(b, null, DataProtectionScope.CurrentUser));
         }
     }
 
