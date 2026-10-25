@@ -27,6 +27,32 @@ bash build.sh
 
 Output: `out/01.RadminBell.exe` and `out/02.Switch Server.exe`.
 No NuGet packages or third-party libraries; only .NET Framework 4.8 (already included in Windows).
+Release builds are made by GitHub Actions (`.github/workflows/build.yml`) from this repository.
+
+## Uninstall
+
+1. `02.Switch Server.exe` > **Back to my previous server** (restores your previous server and removes
+   the account / launcher settings written by RadminBell).
+2. `01.RadminBell.exe` > **Stop**.
+3. Remove the firewall rules: Windows Defender Firewall > Advanced settings > Inbound Rules > delete the
+   rules named `RadminBell - ...` (or, in PowerShell as administrator:
+   `Remove-NetFirewallRule -DisplayName "RadminBell - *"`).
+4. Delete the RadminBell folder and `%LOCALAPPDATA%\RadminBell`.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+Only `01.RadminBell.exe` and `02.Switch Server.exe` are built and signed by this project; the files in the
+`server` folder are the official BBSC server from its author.
+
+Team roles:
+- Committers and reviewers: [joaoedualves](https://github.com/joaoedualves)
+- Approvers: [joaoedualves](https://github.com/joaoedualves)
+
+Privacy policy: this program will not transfer any information to other networked systems unless
+specifically requested by the user or the person installing or operating it. It only talks to the
+Radmin VPN on the same PC and to the co-op server address that the user types in.
 
 ## Credits
 
