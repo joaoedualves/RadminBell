@@ -544,9 +544,13 @@ namespace RadminBell
             back.Click += (s, e) => DoBack();
             Controls.Add(back); y = back.Bottom + D(8);
 
-            var reset = new DarkButton { Text = L.T("Reset do launcher", "Reset launcher"), Glyph = "", Style = BtnStyle.Small, Font = Theme.Body(8.5f), Location = new Point(pad + w / 4, y), Size = new Size(w / 2, D(28)) };
+            // Logs (do mod no Seamless: e o que mostra a sessao do guest) | Reset do launcher
+            int hw = (w - D(12)) / 2;
+            var logs = new DarkButton { Text = "Logs", Glyph = "\uE8B7", Style = BtnStyle.Small, Font = Theme.Body(8.5f), Location = new Point(pad, y), Size = new Size(hw, D(28)) };
+            logs.Click += (s, e) => OpenLogs();
+            var reset = new DarkButton { Text = L.T("Reset do launcher", "Reset launcher"), Glyph = "", Style = BtnStyle.Small, Font = Theme.Body(8.5f), Location = new Point(pad + hw + D(12), y), Size = new Size(hw, D(28)) };
             reset.Click += (s, e) => DoReset();
-            Controls.Add(reset); y = reset.Bottom + D(16);
+            Controls.Add(logs); Controls.Add(reset); y = reset.Bottom + D(16);
 
             y += Footer.Add(this, pad, w, y, false);
             FinishHeight(y + D(10));
@@ -834,6 +838,25 @@ namespace RadminBell
                     else Msg.Show(this, t.Result.Item2);
                     Refresh_();
                 }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        // logs do jogo deste PC: Seamless = bbsc\logs (log do mod, sessao como guest); Bloodborne normal = user da BBport
+        void OpenLogs()
+        {
+            string d = null;
+            if (Coop.Seamless && Switch.Root != null) d = Path.Combine(Switch.Root, @"bbsc\logs");
+            else if (!Coop.Seamless)
+            {
+                string u = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"Bloodborne\user");
+                d = Directory.Exists(u) ? u : Switch.BBPortDir() != null ? Path.Combine(Switch.BBPortDir(), "user") : null;
+            }
+            if (d == null)
+            {
+                Msg.Show(this, L.T("A pasta do Seamless Co-op não foi encontrada (link 'Pasta do Seamless Co-op').", "The Seamless Co-op folder was not found ('Seamless Co-op folder' link)."));
+                return;
+            }
+            Directory.CreateDirectory(d);
+            Process.Start("explorer.exe", "\"" + d + "\"");
         }
 
         void DoReset()
