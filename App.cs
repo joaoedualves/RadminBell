@@ -519,6 +519,8 @@ namespace RadminBell
                 MakeTray();
                 var waiter = new Thread(() => { while (show.WaitOne()) { var c = current; if (c != null && !c.IsDisposed) try { c.BeginInvoke((Action)ShowMain); } catch { } } }) { IsBackground = true };
                 waiter.Start();
+                // guarda: a cada 5 s confere se o jogo continua apontando para o servidor do RadminBell e corrige
+                var guard = new System.Threading.Timer(_ => Switch.Guard(), null, 2000, 5000);
                 while (role != null)
                 {
                     Paths.WriteText(Paths.RoleFile, role);
@@ -539,6 +541,7 @@ namespace RadminBell
                     Application.Run(current);
                     role = next;
                 }
+                guard.Dispose();
                 // o app esta saindo de vez (fechar pelo icone, ou Windows desligando/saindo): o servidor nao fica rodando sozinho
                 if (Server.AnyRunning) Server.Stop();
                 tray.Visible = false; tray.Dispose();

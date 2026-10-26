@@ -333,6 +333,7 @@ namespace RadminBell
             if (Json.Str(chk, "online_server") != ip + ":31313" || (Active != null && Srv(Account(Active)) != ip + ":31313"))
                 return L.T("A troca não ficou gravada (o launcher ou outro programa mudou a configuração). Feche o launcher e tente de novo.",
                            "The switch was not saved (the launcher or another program changed the settings). Close the launcher and try again.");
+            Guard();   // arquivos de redirecionamento antigos (outro servidor) passam a apontar para este
             ok = true;
             string nm = Json.Str(acc, "name");
             return Coop.Seamless
@@ -379,6 +380,93 @@ namespace RadminBell
                 return m.Count > 0 ? m[m.Count - 1].Groups[1].Value : "";
             }
             catch { return null; }
+        }
+
+        // ---- guarda: o jogo continua apontando para o servidor do RadminBell ----
+        // Arquivos host_overrides*.json de instalacoes antigas (ex.: outro servidor) fazem o mod ir para outro
+        // lugar quando o jogo e aberto por fora do .cmd (caso real: jogo.cacadoresbr.com). Enquanto o app esta
+        // aberto e o RadminBell esta em uso (account-radmin.dat existe), confere e corrige: arquivos de
+        // redirecionamento, conta (account.dat) e pagina Online do launcher. Saves nao sao tocados.
+        static readonly object guardLock = new object();
+        static string OverridesJson(string a)
+        {
+            return "{\r\n  \"https://ss4.scej-network.jp:20443\": \"http://" + a + ":20443\",\r\n" +
+                   "  \"http://thehuntersdream.com:18671/summon_messenger\": \"http://" + a + ":31315\",\r\n" +
+                   "  \"https://thehuntersdream.com:18671/summon_messenger\": \"http://" + a + ":31315\"\r\n}\r\n";
+        }
+        // pastas onde o mod/emulador procura o host_overrides (ver bbsc_http.cpp HostOverridesFiles)
+        static List<string> OverrideFiles()
+        {
+            var dirs = new List<string>();
+            if (Coop.Seamless && Root != null)
+            {
+                foreach (var d in new[] { "user", @"bbsc\user", @"emulator\user", @"emulator-novo\user" }) dirs.Add(Path.Combine(Root, d));
+                var bp = Json.Str(Json.Read(Path.Combine(Root, @"tools\bbport-paths.json")), "bbport");
+                if (!string.IsNullOrEmpty(bp)) dirs.Add(Path.Combine(Path.GetDirectoryName(bp), "user"));
+            }
+            else if (BBPortDir() != null) dirs.Add(Path.Combine(BBPortDir(), "user"));
+            var res = new List<string>();
+            foreach (var d in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!Directory.Exists(d)) continue;
+                try { res.AddRange(Directory.GetFiles(d, "host_overrides*.json", SearchOption.AllDirectories)); } catch { }
+            }
+            string ap = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"shadPS4\host_overrides.json");
+            if (File.Exists(ap)) res.Add(ap);
+            return res;
+        }
+        static bool PointsTo(string file, string addr)
+        {
+            var j = Json.Read(file);
+            if (j == null) return false;
+            foreach (var v in j.Values)
+            {
+                var s = v as string;
+                if (s == null) continue;
+                try { if (!string.Equals(new Uri(s).Host, addr, StringComparison.OrdinalIgnoreCase)) return false; } catch { return false; }
+            }
+            return true;
+        }
+        static void GuardLog(string t)
+        {
+            try { File.AppendAllText(Path.Combine(Paths.Data, "correcoes.log"), DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + t + "\r\n", new UTF8Encoding(false)); } catch { }
+        }
+        // devolve quantas coisas corrigiu (0 = estava tudo certo ou o RadminBell nao esta em uso)
+        public static int Guard()
+        {
+            lock (guardLock)
+            {
+                int fixes = 0;
+                try
+                {
+                    var acc = Account(RadminFile);
+                    if (!IsRadmin(acc)) return 0;   // RadminBell fora de uso (Voltar apaga o account-radmin.dat)
+                    string addr = HostOf(acc);
+                    bool game = Util.GameOpen();
+                    // 1. conta do Seamless (account.dat) - so com o jogo fechado (o .cmd le na abertura)
+                    if (Active != null && !game && Srv(Account(Active)) != Srv(acc)) { File.Copy(RadminFile, Active, true); fixes++; GuardLog("account.dat voltou para " + Srv(acc)); }
+                    // 2. pagina Online do launcher - com o launcher fechado (aberto, ele regrava ao fechar; confere de novo depois)
+                    if (!game)
+                    {
+                        var cfg = Json.Read(LauncherFile);
+                        // sem settings.json (Reset do launcher): a BBPort cria um novo; a guarda confere depois
+                        if (cfg != null && Json.Str(cfg, "online_server") != Srv(acc) || Json.Str(cfg, "online_webapi") != "http://" + addr + ":31315"
+                            || Json.Str(cfg, "online_community") != "http://" + addr || Json.Str(cfg, "online_npid") != Json.Str(acc, "name"))
+                        { SetLauncherOnline(acc); fixes++; GuardLog("launcher (pagina Online) voltou para " + Srv(acc)); }
+                    }
+                    // 3. arquivos de redirecionamento apontando para outro servidor
+                    foreach (var f in OverrideFiles())
+                    {
+                        if (PointsTo(f, addr)) continue;
+                        string bak = f + ".antes-radminbell";
+                        if (!File.Exists(bak)) File.Copy(f, bak);
+                        File.WriteAllText(f, OverridesJson(addr), new UTF8Encoding(false));
+                        fixes++; GuardLog(f + " apontava para outro servidor; agora " + addr + " (original em " + Path.GetFileName(bak) + ")");
+                    }
+                }
+                catch (Exception e) { GuardLog("erro: " + e.Message); }
+                return fixes;
+            }
         }
     }
 
