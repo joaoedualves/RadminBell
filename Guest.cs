@@ -294,6 +294,13 @@ namespace RadminBell
 
             var cur = Account(Active);
             var acc = Account(RadminFile);
+            // conta ja feita neste servidor: confere o login (servidor reinstalado/zerado = conta some ou muda;
+            // o jogo mostraria "nao conectado a PlayStation Network")
+            if (acc != null && Srv(acc) == ip + ":31313" && File.Exists(Tool()))
+            {
+                string lo = RunTool(Tool(), ip + " 31313 login " + Json.Str(acc, "name") + " " + Unprotect(Json.Str(acc, "password")));
+                if (lo.Contains("[login] FAILED")) acc = null;
+            }
             if (acc == null || Srv(acc) != ip + ":31313")
             {
                 string tool = Tool();
@@ -397,23 +404,29 @@ namespace RadminBell
         // pastas onde o mod/emulador procura o host_overrides (ver bbsc_http.cpp HostOverridesFiles)
         static List<string> OverrideFiles()
         {
-            var dirs = new List<string>();
+            var res = new List<string>();
+            // pastas do Seamless Co-op: qualquer host_overrides (inclusive dentro de savedata)
+            if (Coop.Seamless && Root != null)
+                foreach (var d in new[] { "user", @"bbsc\user", @"emulator\user", @"emulator-novo\user" })
+                {
+                    string p = Path.Combine(Root, d);
+                    if (Directory.Exists(p)) try { res.AddRange(Directory.GetFiles(p, "host_overrides*.json", SearchOption.AllDirectories)); } catch { }
+                }
+            // pasta user da BBport: so o host_overrides.custom.json (o que o jogo usa). O host_overrides.json dela e
+            // o padrao da propria BBport (The Hunter's Dream), so vale sem o custom - nao e mexido.
+            string bbport = null;
             if (Coop.Seamless && Root != null)
             {
-                foreach (var d in new[] { "user", @"bbsc\user", @"emulator\user", @"emulator-novo\user" }) dirs.Add(Path.Combine(Root, d));
                 var bp = Json.Str(Json.Read(Path.Combine(Root, @"tools\bbport-paths.json")), "bbport");
-                if (!string.IsNullOrEmpty(bp)) dirs.Add(Path.Combine(Path.GetDirectoryName(bp), "user"));
+                if (!string.IsNullOrEmpty(bp)) bbport = Path.GetDirectoryName(bp);
             }
-            else if (BBPortDir() != null) dirs.Add(Path.Combine(BBPortDir(), "user"));
-            var res = new List<string>();
-            foreach (var d in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
+            else bbport = BBPortDir();
+            if (bbport != null)
             {
-                if (!Directory.Exists(d)) continue;
-                try { res.AddRange(Directory.GetFiles(d, "host_overrides*.json", SearchOption.AllDirectories)); } catch { }
+                string c = Path.Combine(bbport, @"user\host_overrides.custom.json");
+                if (File.Exists(c)) res.Add(c);
             }
-            string ap = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"shadPS4\host_overrides.json");
-            if (File.Exists(ap)) res.Add(ap);
-            return res;
+            return res.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
         static bool PointsTo(string file, string addr)
         {
