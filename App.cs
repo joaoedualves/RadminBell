@@ -497,6 +497,9 @@ namespace RadminBell
         [STAThread]
         static int Main(string[] args)
         {
+            // pasta atual fora da pasta do RadminBell: o que o app abre (Radmin, navegador, explorer) herda a pasta
+            // atual e, se continuar rodando depois, impediria apagar/mover a pasta do RadminBell
+            try { Environment.CurrentDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); } catch { }
             Paths.Init();
             L.Load();
             Coop.Load();

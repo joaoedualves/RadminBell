@@ -195,7 +195,8 @@ namespace RadminBell
         public static bool Open()
         {
             var exe = Gui();
-            if (exe != null) { Process.Start(exe); return true; }
+            // pasta atual = a do Radmin: o Radmin fica rodando e nao pode segurar a pasta do RadminBell (impede apagar)
+            if (exe != null) { Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = Path.GetDirectoryName(exe), UseShellExecute = true }).Dispose(); return true; }
             Util.OpenUrl("https://www.radmin-vpn.com");
             return false;
         }
