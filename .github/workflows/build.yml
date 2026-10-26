@@ -1,4 +1,4 @@
-# Builds the 2 exes on GitHub (needed for SignPath: signed files must come from an automated build of this repo).
+# Builds RadminBell.exe on GitHub (needed for SignPath: signed files must come from an automated build of this repo).
 # Runs by hand (Actions > build > Run workflow) or when a v* tag is pushed.
 name: build
 
@@ -20,14 +20,12 @@ jobs:
         shell: bash
         run: bash build.sh
 
-      - name: Upload exes
+      - name: Upload exe
         id: upload
         uses: actions/upload-artifact@v4
         with:
           name: RadminBell
-          path: |
-            out/01.RadminBell.exe
-            out/02.Switch Server.exe
+          path: out/RadminBell.exe
           if-no-files-found: error
 
       # After SignPath approves the project, add the signing step here

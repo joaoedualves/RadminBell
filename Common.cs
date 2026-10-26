@@ -1,5 +1,5 @@
-// RadminBell - parte comum dos 2 apps (painel e Switch Server): tema escuro, controles desenhados,
-// idioma, pastas, Radmin VPN (IP fixo, ligado/desligado, redes pelo service.log) e JSON.
+// RadminBell - parte comum: tema escuro, controles desenhados, idioma, pastas,
+// Radmin VPN (IP, ligado/desligado, redes e amigos pelo service.log), rede local e JSON.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -23,9 +23,9 @@ using System.Reflection;
 [assembly: AssemblyProduct("RadminBell - Private Bloodborne Co-op Server")]
 [assembly: AssemblyCompany("RadminBell")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 RadminBell - MIT License")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
-[assembly: AssemblyInformationalVersion("1.0")]
+[assembly: AssemblyVersion("1.0.1.0")]
+[assembly: AssemblyFileVersion("1.0.1.0")]
+[assembly: AssemblyInformationalVersion("1.0.1")]
 
 namespace RadminBell
 {
@@ -57,16 +57,26 @@ namespace RadminBell
             p.CloseFigure(); return p;
         }
 
-        static Image logo;
-        public static Image Logo
+        // imagens dentro do exe sem compressao (imagens.ps1): int32 largura, int32 altura, pixels BGRA
+        static readonly Dictionary<string, Bitmap> imgs = new Dictionary<string, Bitmap>();
+        public static Bitmap Img(string name)
         {
-            get
+            Bitmap b;
+            if (imgs.TryGetValue(name, out b)) return b;
+            using (var s = typeof(Theme).Assembly.GetManifestResourceStream(name + ".rgba"))
+            using (var r = new BinaryReader(s))
             {
-                if (logo == null)
-                    using (var s = typeof(Theme).Assembly.GetManifestResourceStream("logo.png")) logo = Image.FromStream(s);
-                return logo;
+                int w = r.ReadInt32(), h = r.ReadInt32();
+                var px = r.ReadBytes(w * h * 4);
+                b = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                var d = b.LockBits(new Rectangle(0, 0, w, h), System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                for (int y = 0; y < h; y++) Marshal.Copy(px, y * w * 4, d.Scan0 + y * d.Stride, w * 4);
+                b.UnlockBits(d);
             }
+            imgs[name] = b;
+            return b;
         }
+        public static Image Logo { get { return Img("logo"); } }
     }
 
     // ---------- idioma ----------
@@ -102,17 +112,42 @@ namespace RadminBell
     // ---------- pastas e arquivos do RadminBell ----------
     static class Paths
     {
-        public static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RadminBell");
+        // modo teste: com MODO-TESTE.txt ao lado do exe, a memoria do RadminBell fica em dados-teste\ e e zerada a
+        // cada abertura (sempre como na 1a vez). O backup do servidor anterior (Voltar) nunca e apagado.
+        static readonly string RealData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RadminBell");
+        public static readonly bool TestMode = File.Exists(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "MODO-TESTE.txt"));
+        public static readonly string Data = TestMode ? Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "dados-teste") : RealData;
+        static readonly string[] Keep = { "launcher-anterior.json", "account-radmin.dat", "redes-criadas.json" };
+        public static string SavedNetsFile { get { return Path.Combine(Data, "redes-criadas.json"); } }   // redes feitas pelo RadminBell (nome + senha)
         public static string LangFile { get { return Path.Combine(Data, "idioma.txt"); } }
         public static string NetFile { get { return Path.Combine(Data, "rede-radmin.txt"); } }
         public static string HostFile { get { return Path.Combine(Data, "servidor-radmin.txt"); } }
         public static string SeamlessFile { get { return Path.Combine(Data, "pasta-seamless.txt"); } }
+        public static string RoleFile { get { return Path.Combine(Data, "papel.txt"); } }      // host / guest
+        public static string BBPortFile { get { return Path.Combine(Data, "pasta-bbport.txt"); } }  // Bloodborne normal: pasta com o Bloodborne.exe
+        public static string CoopFile { get { return Path.Combine(Data, "coop.txt"); } }       // seamless / normal
+        public static string InviteFile { get { return Path.Combine(Data, "convite.txt"); } }  // ultimo convite colado (guest)
         public static string AppDir { get { return Path.GetDirectoryName(Application.ExecutablePath); } }
         public static string Server { get { return Path.Combine(AppDir, "server"); } }
+        public static string RepairFile { get { return Path.Combine(Data, "reparo-servidor.txt"); } }   // quando o servidor foi reparado
         public static string Logs { get { return Path.Combine(Server, "logs"); } }
 
-        public static void Init()
+        public static void Init(bool fresh = false)
         {
+            if (TestMode)
+            {
+                Directory.CreateDirectory(Data);
+                if (fresh)
+                    foreach (var f in Directory.GetFiles(Data))
+                        if (!Keep.Contains(Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)) try { File.Delete(f); } catch { }
+                // o backup do servidor anterior da memoria normal vale aqui tambem (senao o Voltar nao saberia voltar)
+                foreach (var k in Keep)
+                {
+                    string a = Path.Combine(RealData, k), b = Path.Combine(Data, k);
+                    if (File.Exists(a) && !File.Exists(b)) try { File.Copy(a, b); } catch { }
+                }
+                return;
+            }
             string old = Path.Combine(Path.GetDirectoryName(Data), "BRHunt-Radmin");   // nome antigo do app
             if (Directory.Exists(old) && !Directory.Exists(Data)) CopyDir(old, Data);
             Directory.CreateDirectory(Data);
@@ -167,23 +202,27 @@ namespace RadminBell
 
         public static RadminState Read()
         {
-            var st = new RadminState();
+            // instalado = o programa existe (desinstalar deixa o registro e o log para tras);
+            // ligado = a placa do Radmin esta ativa com IP 26.x (e o Radmin nao foi desligado no botao)
+            var st = new RadminState { Installed = Gui() != null };
+            if (!st.Installed) return st;
+            bool regOn = true;
             try
             {
                 using (var hk = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32).OpenSubKey(Key))
                 {
                     if (hk != null)
                     {
-                        st.Installed = true;
                         object ip = hk.GetValue("IPv4"), on = hk.GetValue("PowerOn");
                         if (ip is int) { uint v = unchecked((uint)(int)ip); st.Ip = string.Format("{0}.{1}.{2}.{3}", v >> 24, (v >> 16) & 255, (v >> 8) & 255, v & 255); }
-                        st.PowerOn = on is int ? (int)on != 0 : true;
+                        regOn = on is int ? (int)on != 0 : true;
                     }
                 }
             }
             catch { }
-            if (Gui() != null) st.Installed = true;
-            if (!st.Ip.StartsWith("26.")) st.Ip = AdapterIp() ?? "";
+            string live = AdapterIp();
+            if (live != null) st.Ip = live;
+            st.PowerOn = regOn && live != null;
             ReadLog(st);
             return st;
         }
@@ -195,6 +234,7 @@ namespace RadminBell
                 foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
                 {
                     if (ni.Name != "Radmin VPN" && !ni.Description.StartsWith("Famatech Radmin VPN")) continue;
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
                     foreach (var a in ni.GetIPProperties().UnicastAddresses)
                         if (a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && a.Address.ToString().StartsWith("26.")) return a.Address.ToString();
                 }
@@ -207,6 +247,8 @@ namespace RadminBell
         static readonly Regex ReqCreate = new Regex(@"^\[req:(\d+)\] Requested to (create|join) network '(.*)'");
         static readonly Regex ReqDone = new Regex(@"^\[req:(\d+)\] (Succeeded|Failed|Request dropped)");
         static readonly Regex Gone = new Regex(@"^You (deleted|left) network '(.*)'");
+        // rede apagada pelo dono (outro PC) ou voce removido dela: tambem sai da lista
+        static readonly Regex GoneByOther = new Regex(@"^Network '(.*)' was (deleted|removed)|^You (were|have been) (kicked|removed|banned|expelled)\b.*network '(.*)'");
         static readonly Regex Joined = new Regex(@"^You joined network '(.*)'");
         static readonly Regex PeerUp = new Regex(@"^Connected to (\d+)/'(.*)' via");
         static readonly Regex PeerDown = new Regex(@"^Node (\d+)/'?(.*?)'? disconnected");
@@ -242,6 +284,11 @@ namespace RadminBell
                         pending.Remove(x.Groups[1].Value);
                     }
                     else if ((x = Gone.Match(s)).Success) { nets.Remove(x.Groups[2].Value); owned.Remove(x.Groups[2].Value); }
+                    else if ((x = GoneByOther.Match(s)).Success)
+                    {
+                        string n = x.Groups[1].Success && x.Groups[1].Value != "" ? x.Groups[1].Value : x.Groups[5].Value;
+                        nets.Remove(n); owned.Remove(n);
+                    }
                     else if ((x = Joined.Match(s)).Success) nets.Add(x.Groups[1].Value);
                     else if ((x = PeerUp.Match(s)).Success) peers[x.Groups[1].Value] = x.Groups[2].Value;
                     else if ((x = PeerDown.Match(s)).Success) peers.Remove(x.Groups[1].Value);
@@ -253,6 +300,18 @@ namespace RadminBell
             catch { }
         }
         static void Copy(RadminState a, RadminState b) { b.ConnectedToServer = a.ConnectedToServer; b.Networks = a.Networks; b.Owned = a.Owned; b.Peers = a.Peers; }
+
+        // linha "Radmin VPN:" do status: so o estado do proprio Radmin (a rede tem a linha dela)
+        public static List<StatusBox.Run> StatusLine(RadminState st)
+        {
+            var r = new List<StatusBox.Run> { new StatusBox.Run("Radmin VPN: ", Theme.Muted) };
+            if (st == null) r.Add(new StatusBox.Run("...", Theme.Muted));
+            else if (!st.Installed) r.Add(new StatusBox.Run(L.T("PRECISA BAIXAR", "NEEDS DOWNLOAD"), Theme.BloodText, true));
+            else if (!st.PowerOn || !st.Ip.StartsWith("26.")) r.Add(new StatusBox.Run(L.T("DESLIGADO", "OFF"), Theme.BloodText, true));
+            else if (st.LogFound && !st.ConnectedToServer) r.Add(new StatusBox.Run(L.T("CONECTANDO...", "CONNECTING..."), Theme.Gold, true));
+            else r.Add(new StatusBox.Run(L.T("LIGADO", "ON"), Theme.Green, true));
+            return r;
+        }
     }
 
     // ---------- utilidades ----------
@@ -269,7 +328,48 @@ namespace RadminBell
             }
             catch { return false; }
         }
+        public static string HttpGet(string url, int ms)
+        {
+            try
+            {
+                var rq = (HttpWebRequest)WebRequest.Create(url);
+                rq.Timeout = ms; rq.ReadWriteTimeout = ms; rq.Proxy = null;
+                using (var r = (HttpWebResponse)rq.GetResponse())
+                using (var sr = new StreamReader(r.GetResponseStream(), Encoding.UTF8)) return r.StatusCode == HttpStatusCode.OK ? sr.ReadToEnd() : null;
+            }
+            catch { return null; }
+        }
         public static bool Running(string name) { var p = Process.GetProcessesByName(name); bool r = p.Length > 0; foreach (var x in p) x.Dispose(); return r; }
+        // jogo ou launcher da BBPort abertos (o launcher grava a pagina Online de novo ao fechar)
+        public static bool GameOpen() { return Running("Bloodborne") || Running("bb-probe"); }
+
+        // IPs 26.x que o Windows ja viu na placa do Radmin (tabela de vizinhos): candidatos a servidor
+        [StructLayout(LayoutKind.Sequential)]
+        struct MIB_IPNETROW { public int Index; public int PhysAddrLen; [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)] public byte[] Phys; public uint Addr; public int Type; }
+        [DllImport("iphlpapi.dll")] static extern int GetIpNetTable(IntPtr table, ref int size, bool sort);
+        public static List<string> NeighborIps()
+        {
+            var res = new List<string>();
+            int size = 0;
+            GetIpNetTable(IntPtr.Zero, ref size, false);
+            if (size <= 0) return res;
+            IntPtr buf = Marshal.AllocHGlobal(size);
+            try
+            {
+                if (GetIpNetTable(buf, ref size, false) != 0) return res;
+                int n = Marshal.ReadInt32(buf), rs = Marshal.SizeOf(typeof(MIB_IPNETROW));
+                for (int i = 0; i < n; i++)
+                {
+                    var row = (MIB_IPNETROW)Marshal.PtrToStructure(buf + 4 + i * rs, typeof(MIB_IPNETROW));
+                    var b = BitConverter.GetBytes(row.Addr);
+                    if (b[0] != 26 || b[3] == 255 || b[3] == 0 || row.Type == 2) continue;   // 2 = invalido
+                    var ip = b[0] + "." + b[1] + "." + b[2] + "." + b[3];
+                    if (!res.Contains(ip)) res.Add(ip);
+                }
+            }
+            finally { Marshal.FreeHGlobal(buf); }
+            return res;
+        }
         public static bool IsAdmin()
         {
             using (var id = System.Security.Principal.WindowsIdentity.GetCurrent())
@@ -285,6 +385,45 @@ namespace RadminBell
             var b = new byte[bytes]; using (var r = RandomNumberGenerator.Create()) r.GetBytes(b);
             return string.Concat(b.Select(x => x.ToString("x2")));
         }
+    }
+
+    // ---------- redes do Radmin usadas pelo RadminBell: nome -> senha (protegida pelo Windows, so este usuario le) e IP do host ----------
+    // O Radmin nao mostra a senha de rede nenhuma; o app guarda as redes que ele gerou/criou (host) e as que
+    // a pessoa entrou pelo convite (guest), e o IP do host em que o guest ja se conectou.
+    static class SavedNets
+    {
+        static Dictionary<string, object> Load() { return Json.Read(Paths.SavedNetsFile) ?? new Dictionary<string, object>(); }
+        static Dictionary<string, object> Entry(Dictionary<string, object> d, string name)
+        {
+            object v; d.TryGetValue(name, out v);
+            var e = v as Dictionary<string, object>;
+            if (e == null) { e = new Dictionary<string, object>(); if (v is string) e["p"] = v; }   // formato antigo: so a senha
+            return e;
+        }
+        public static void Save(string name, string pass = null, string hostIp = null)
+        {
+            if (string.IsNullOrEmpty(name) || (string.IsNullOrEmpty(pass) && string.IsNullOrEmpty(hostIp))) return;
+            try
+            {
+                var d = Load(); var e = Entry(d, name);
+                if (!string.IsNullOrEmpty(pass)) e["p"] = Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(pass), null, DataProtectionScope.CurrentUser));
+                if (!string.IsNullOrEmpty(hostIp)) e["ip"] = hostIp;
+                d[name] = e;
+                Json.Write(Paths.SavedNetsFile, d);
+            }
+            catch { }
+        }
+        public static string Pass(string name)
+        {
+            try
+            {
+                var p = Json.Str(Entry(Load(), name), "p");
+                return p == null ? null : Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(p), null, DataProtectionScope.CurrentUser));
+            }
+            catch { return null; }
+        }
+        public static string HostIp(string name) { try { return Json.Str(Entry(Load(), name), "ip"); } catch { return null; } }
+        public static List<string> Names() { return Load().Keys.ToList(); }
     }
 
     // ---------- JSON (mantem ordem das chaves; escreve indentado) ----------
@@ -331,6 +470,60 @@ namespace RadminBell
         readonly Panel header;
         readonly string sub;
 
+        // janela principal: o X esconde na area de notificacao (fechar de verdade pelo menu do icone)
+        public bool CloseToTray;
+        public static bool Exiting;
+
+        // janelas que abrem por cima do app (avisos, redes, passo a passo...): sombra vermelho-escura em volta
+        // (3 camadas atras da janela, em degrade) e sempre centralizada sobre o app
+        readonly List<Form> glow = new List<Form>();
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            if (CloseToTray) return;
+            var o = Owner ?? Form.ActiveForm;
+            if (o != null && o != this && o.Visible && o.WindowState != FormWindowState.Minimized)
+            {
+                StartPosition = FormStartPosition.Manual;
+                Location = new Point(o.Left + (o.Width - Width) / 2, o.Top + (o.Height - Height) / 2);
+            }
+        }
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            if (CloseToTray) return;
+            foreach (var l in new[] { new[] { 16f, 0.12f }, new[] { 10f, 0.2f }, new[] { 5f, 0.32f } })
+                glow.Add(new GlowForm { BackColor = Theme.Blood, Opacity = l[1], Tag = (int)l[0] });
+            foreach (var g in glow) { if (Owner != null) g.Owner = Owner; g.Show(); }   // mesmo "pai" da janela: fica no mesmo grupo
+            PlaceGlow();
+            LocationChanged += (s, a) => PlaceGlow();
+            SizeChanged += (s, a) => PlaceGlow();
+            Activated += (s, a) => PlaceGlow();
+            // depois que tudo apareceu: janela na frente e sombra logo atras dela
+            BeginInvoke((Action)(() => { if (IsDisposed) return; Activate(); BringToFront(); PlaceGlow(); }));
+        }
+        [DllImport("user32")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
+        void PlaceGlow()
+        {
+            // cada camada logo ATRAS desta janela (nunca por cima)
+            foreach (var g in glow)
+            {
+                int m = D((int)g.Tag);
+                SetWindowPos(g.Handle, Handle, Left - m, Top - m, Width + m * 2, Height + m * 2, 0x0010);   // SWP_NOACTIVATE
+            }
+        }
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            foreach (var g in glow) { try { g.Close(); g.Dispose(); } catch { } }
+            glow.Clear();
+            base.OnFormClosed(e);
+        }
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (CloseToTray && !Exiting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); return; }
+            base.OnFormClosing(e);
+        }
+
         public DarkForm(int width, string subtitle = null, bool big = false)
         {
             sub = subtitle;
@@ -375,13 +568,10 @@ namespace RadminBell
         void PaintHeader(object s, PaintEventArgs e)
         {
             var g = e.Graphics; g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.SmoothingMode = SmoothingMode.AntiAlias;
+            // so a logo (o papel Host/Guest fica embaixo, como titulo - RoleTitle)
             var img = Theme.Logo;
-            int h = sub == null || sub == "RadminBell" ? D(30) : D(26);
-            int w = h * img.Width / img.Height;
-            int top = sub == null || sub == "RadminBell" ? (header.Height - h) / 2 : D(10);
-            g.DrawImage(img, new Rectangle(D(20), top, w, h));
-            if (sub != null && sub != "RadminBell")
-                TextRenderer.DrawText(g, sub.ToUpperInvariant(), Theme.Title(8.5f), new Point(D(21), top + h + D(4)), Theme.Gold, TextFormatFlags.NoPadding);
+            int h = D(30), w = h * img.Width / img.Height;
+            g.DrawImage(img, new Rectangle(D(20), (header.Height - h) / 2, w, h));
             using (var p = new Pen(Theme.Border)) g.DrawLine(p, 0, header.Height - 1, header.Width, header.Height - 1);
         }
         protected override void OnPaint(PaintEventArgs e)
@@ -391,6 +581,22 @@ namespace RadminBell
             using (var p = new Pen(Color.FromArgb(110, Theme.Blood))) e.Graphics.DrawRectangle(p, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
         }
         protected override void OnResize(EventArgs e) { base.OnResize(e); Invalidate(); }
+    }
+
+    // camada da sombra: nao recebe foco nem clique, nao aparece na barra de tarefas
+    class GlowForm : Form
+    {
+        public GlowForm() { FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual; }
+        protected override bool ShowWithoutActivation { get { return true; } }
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x20 | 0x80000 | 0x08000000 | 0x80;   // TRANSPARENT (clique passa) | LAYERED | NOACTIVATE | TOOLWINDOW
+                return cp;
+            }
+        }
     }
 
     class HeaderButton : Control
@@ -416,6 +622,8 @@ namespace RadminBell
     class DarkButton : Control
     {
         public string Glyph; public BtnStyle Style = BtnStyle.Normal; public string SubText;
+        // aparece apagado mas continua clicavel (o clique explica o que falta)
+        bool dim; public bool Dim { get { return dim; } set { if (dim != value) { dim = value; Invalidate(); } } }
         bool hover, down;
         public DarkButton()
         {
@@ -435,7 +643,7 @@ namespace RadminBell
         {
             var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Parent is Card ? Theme.Panel : Parent != null ? Parent.BackColor : Theme.Bg);
-            bool h = hover && Enabled;
+            bool h = hover && Enabled && !dim;
             Color bg = Theme.Panel, border = Theme.Border, fore = Theme.Text, icon = Theme.Gold;
             switch (Style)
             {
@@ -447,7 +655,7 @@ namespace RadminBell
                 case BtnStyle.Outline: bg = Color.Transparent; fore = h ? Theme.Text : Theme.Muted; border = h ? Theme.Hex("#444444") : Theme.Border; icon = fore; break;
                 case BtnStyle.Small: bg = Theme.Bg; fore = h ? Theme.Gold : Theme.Muted; border = h ? Theme.Gold : Theme.Border; icon = fore; break;
             }
-            if (!Enabled) { fore = Theme.Hex("#4a4a4a"); icon = fore; border = Theme.Hex("#1f1f1f"); bg = Theme.Hex("#0e0e0e"); }
+            if (!Enabled || dim) { fore = Theme.Hex("#4a4a4a"); icon = fore; border = Theme.Hex("#1f1f1f"); bg = Theme.Hex("#0e0e0e"); }
             if (down && Enabled) bg = ControlPaint.Dark(bg, 0.05f);
             var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
             using (var path = Theme.Round(r, 4 * DeviceDpi / 96f))
@@ -487,20 +695,28 @@ namespace RadminBell
     class DarkInput : Panel
     {
         public readonly TextBox Box;
+        readonly Label hint;
+        // dica apagada quando o campo esta vazio
+        public string Placeholder { get { return hint.Text; } set { hint.Text = value; hint.Visible = Box.Text == "" && value != ""; } }
         public DarkInput()
         {
             BackColor = Theme.Input; DoubleBuffered = true;
             Box = new TextBox { BorderStyle = BorderStyle.None, BackColor = Theme.Input, ForeColor = Theme.Text, Font = Theme.Mono(10) };
-            Controls.Add(Box);
+            hint = new Label { BackColor = Theme.Input, ForeColor = Theme.Hex("#4a4a4a"), Font = Theme.Body(8.5f), AutoEllipsis = true, Cursor = Cursors.IBeam };
+            Controls.Add(Box); Controls.Add(hint); hint.BringToFront();
             Box.GotFocus += (s, e) => Invalidate(); Box.LostFocus += (s, e) => Invalidate();
+            Box.TextChanged += (s, e) => hint.Visible = Box.Text == "" && hint.Text != "";
+            hint.Click += (s, e) => Box.Focus();
             Click += (s, e) => Box.Focus();
         }
-        public override string Text { get { return Box.Text; } set { Box.Text = value; } }
+        public override string Text { get { return Box.Text; } set { Box.Text = value; hint.Visible = Box.Text == "" && hint.Text != ""; } }
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
             int pad = (int)(10 * DeviceDpi / 96f);
             Box.Location = new Point(pad, (Height - Box.Height) / 2); Box.Width = Width - pad * 2;
+            hint.Location = new Point(pad, 1); hint.Size = new Size(Width - pad * 2, Height - 2); hint.TextAlign = ContentAlignment.MiddleLeft;
+            hint.Visible = Box.Text == "" && hint.Text != "";
         }
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -587,6 +803,21 @@ namespace RadminBell
         }
     }
 
+    // titulo "Host" / "Guest" (imagem na fonte da logo), centralizado entre a logo e o bloco de status
+    class RoleTitle : Control
+    {
+        readonly string img;
+        public RoleTitle(string image) { img = image; SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true); }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics; g.Clear(Theme.Bg);
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            var b = Theme.Img(img);
+            int h = Height, w = h * b.Width / b.Height;
+            g.DrawImage(b, new Rectangle((Width - w) / 2, 0, w, h));
+        }
+    }
+
     // link pequeno (Language / Idioma)
     class LinkText : Control
     {
@@ -620,6 +851,74 @@ namespace RadminBell
             using (var p = new Pen(hover ? Theme.Gold : (chk ? Theme.Blood : Theme.Hex("#444444")))) g.DrawRectangle(p, box);
             if (chk) using (var fi = Theme.Icon(7)) TextRenderer.DrawText(g, "", fi, box, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             TextRenderer.DrawText(g, Text, Font, new Rectangle(bx + (int)(8 * s), 0, Width - bx, Height), hover ? Theme.Text : Theme.Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+    }
+
+    // ---------- seletor de PASTA do Windows (o mesmo visual do Explorer) ----------
+    static class FolderPicker
+    {
+        [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")] class FileOpenDialogRCW { }
+        [ComImport, Guid("42f85136-db7e-439c-85f1-e4075d135fc8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IFileDialog
+        {
+            [PreserveSig] int Show(IntPtr parent);
+            void SetFileTypes(uint c, IntPtr t); void SetFileTypeIndex(uint i); void GetFileTypeIndex(out uint i);
+            void Advise(IntPtr p, out uint c); void Unadvise(uint c);
+            void SetOptions(uint fos); void GetOptions(out uint fos);
+            void SetDefaultFolder(IShellItem si); void SetFolder(IShellItem si);
+            void GetFolder(out IShellItem si); void GetCurrentSelection(out IShellItem si);
+            void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string n); void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string n);
+            void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string t);
+            void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string t); void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string t);
+            void GetResult(out IShellItem si);
+        }
+        [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IShellItem
+        {
+            void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv); void GetParent(out IShellItem si);
+            void GetDisplayName(uint sigdn, [MarshalAs(UnmanagedType.LPWStr)] out string name);
+            void GetAttributes(uint mask, out uint attr); void Compare(IShellItem si, uint hint, out int order);
+        }
+        // devolve a pasta escolhida ou null
+        public static string Pick(IWin32Window owner, string title)
+        {
+            try
+            {
+                var dlg = (IFileDialog)new FileOpenDialogRCW();
+                dlg.SetOptions(0x20 | 0x40 | 0x800);   // FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST
+                dlg.SetTitle(title);
+                if (dlg.Show(owner != null ? owner.Handle : IntPtr.Zero) != 0) return null;
+                IShellItem si; dlg.GetResult(out si);
+                string path; si.GetDisplayName(0x80058000, out path);   // SIGDN_FILESYSPATH
+                return path;
+            }
+            catch
+            {
+                using (var f = new FolderBrowserDialog { Description = title }) return f.ShowDialog(owner) == DialogResult.OK ? f.SelectedPath : null;
+            }
+        }
+
+        // acha a pasta que tem o arquivo 'marker' (ex.: tools\play-bbport.ps1): na escolhida, acima dela ou dentro (ate 3 niveis)
+        public static List<string> FindWith(string start, string marker, int depth = 3)
+        {
+            var res = new List<string>();
+            if (string.IsNullOrEmpty(start) || !Directory.Exists(start)) return res;
+            for (var d = new DirectoryInfo(start); d != null; d = d.Parent)
+                if (File.Exists(Path.Combine(d.FullName, marker))) { res.Add(d.FullName); return res; }
+            var q = new Queue<KeyValuePair<string, int>>(); q.Enqueue(new KeyValuePair<string, int>(start, 0));
+            while (q.Count > 0 && res.Count < 20)
+            {
+                var cur = q.Dequeue();
+                if (cur.Value >= depth) continue;
+                string[] subs;
+                try { subs = Directory.GetDirectories(cur.Key); } catch { continue; }
+                foreach (var s in subs)
+                {
+                    if (File.Exists(Path.Combine(s, marker))) res.Add(s);
+                    else q.Enqueue(new KeyValuePair<string, int>(s, cur.Value + 1));
+                }
+            }
+            return res.OrderBy(x => x.Length).ToList();
         }
     }
 
