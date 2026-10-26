@@ -470,12 +470,14 @@ namespace RadminBell
                 else L4.Add(new StatusBox.Run(L.T("desligado", "off"), Theme.BloodText));
             }
             status.Lines = new List<StatusBox.Run[]> { L1.ToArray(), L2.ToArray(), L3.ToArray(), L4.ToArray() };
+            if (st != null && st.Peers.Count > 0 && st.PowerOn)
+                status.Lines.Add(new[] { new StatusBox.Run(L.T("Amigos no Radmin: ", "Friends in Radmin: "), Theme.Muted), new StatusBox.Run(string.Join(", ", st.Peers), Theme.Text) });
+            // jogadores por ultimo
             if (shad && game)
                 status.Lines.Add(new[] { new StatusBox.Run(L.T("Jogadores: ", "Players: "), Theme.Muted),
                                          players.Count > 0 ? new StatusBox.Run(string.Join(", ", players), Theme.Text, true) : new StatusBox.Run(L.T("ninguém ainda", "nobody yet"), Theme.Muted) });
-            if (st != null && st.Peers.Count > 0 && st.PowerOn)
-                status.Lines.Add(new[] { new StatusBox.Run(L.T("Amigos no Radmin: ", "Friends in Radmin: "), Theme.Muted), new StatusBox.Run(string.Join(", ", st.Peers), Theme.Text) });
-            int h = D(10) * 2 + status.LineH * Math.Max(6, status.Lines.Count);
+            // altura minima de 6 linhas (janela nao pula); cresce quando a lista de nomes quebra em mais linhas
+            int h = D(10) * 2 + status.LineH * Math.Max(6, status.Rows);
             if (status.Height != h) Relayout(h - status.Height);
             status.Invalidate();
 

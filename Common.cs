@@ -758,27 +758,58 @@ namespace RadminBell
         public List<Run[]> Lines = new List<Run[]>();
         public StatusBox() { SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true); }
         public int LineH { get { return (int)(21 * DeviceDpi / 96f); } }
+        // um pedaco de texto ja posicionado (linha visual, x)
+        class Piece { public Run R; public string T; public int X, Row; }
+        // monta as linhas visuais: lista separada por virgula (Jogadores, Amigos no Radmin) que nao cabe continua
+        // na linha de baixo, alinhada com o comeco da lista; o resto que nao cabe termina em "..."
+        List<Piece> Layout(out int rows)
+        {
+            var res = new List<Piece>(); float s = DeviceDpi / 96f;
+            int left = (int)(16 * s), right = Width - (int)(8 * s), row = 0;
+            using (var fr = Theme.Mono(9.5f)) using (var fb = Theme.Mono(9.5f, FontStyle.Bold))
+            {
+                foreach (var line in Lines)
+                {
+                    int x = left;
+                    foreach (var r in line)
+                    {
+                        var f = r.B ? fb : fr;
+                        Func<string, int> W = t => TextRenderer.MeasureText(t, f, Size.Empty, TextFormatFlags.NoPadding).Width;
+                        int w = W(r.T);
+                        if (x + w <= right || !r.T.Contains(", ")) { res.Add(new Piece { R = r, T = r.T, X = x, Row = row }); x += w; continue; }
+                        int indent = x; string cur = "";
+                        var items = r.T.Split(new[] { ", " }, StringSplitOptions.None);
+                        for (int i = 0; i < items.Length; i++)
+                        {
+                            string tok = items[i] + (i < items.Length - 1 ? ", " : "");
+                            if (cur != "" && x + W((cur + tok).TrimEnd()) > right)
+                            {
+                                res.Add(new Piece { R = r, T = cur.TrimEnd(), X = x, Row = row });
+                                row++; x = indent; cur = "";
+                            }
+                            cur += tok;
+                        }
+                        res.Add(new Piece { R = r, T = cur, X = x, Row = row }); x += W(cur);
+                    }
+                    row++;
+                }
+            }
+            rows = row;
+            return res;
+        }
+        // quantas linhas a caixa precisa (com a quebra da lista de nomes)
+        public int Rows { get { int n; Layout(out n); return n; } }
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics; float s = DeviceDpi / 96f;
             g.Clear(Theme.StatusBg);
             using (var p = new Pen(Theme.Border)) g.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
             using (var b = new SolidBrush(Color.FromArgb(140, Theme.Blood))) g.FillRectangle(b, 0, 0, Math.Max(2, (int)(2 * s)), Height);
-            using (var fr = Theme.Mono(9.5f)) using (var fb = Theme.Mono(9.5f, FontStyle.Bold)) using (var fsm = Theme.Mono(8.5f))
+            using (var fr = Theme.Mono(9.5f)) using (var fb = Theme.Mono(9.5f, FontStyle.Bold))
             {
-                int y = (int)(10 * s);
-                foreach (var line in Lines)
-                {
-                    int x = (int)(16 * s);
-                    foreach (var r in line)
-                    {
-                        var f = r.B ? fb : fr;
-                        var w = TextRenderer.MeasureText(g, r.T, f, Size.Empty, TextFormatFlags.NoPadding).Width;
-                        TextRenderer.DrawText(g, r.T, f, new Rectangle(x, y, Width - x - (int)(8 * s), LineH), r.C, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
-                        x += w;
-                    }
-                    y += LineH;
-                }
+                int top = (int)(10 * s), rows;
+                foreach (var pc in Layout(out rows))
+                    TextRenderer.DrawText(g, pc.T, pc.R.B ? fb : fr, new Rectangle(pc.X, top + pc.Row * LineH, Width - pc.X - (int)(8 * s), LineH), pc.R.C, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
             }
         }
     }

@@ -718,19 +718,20 @@ namespace RadminBell
             else { sv.Add(new StatusBox.Run(ip, Theme.Text)); sv.Add(new StatusBox.Run(L.T("  ✗ sem resposta", "  ✗ not answering"), Theme.BloodText)); }
             lines.Add(sv.ToArray());
 
-            if (players != null)
-                lines.Add(new[] { new StatusBox.Run(L.T("Jogadores: ", "Players: "), Theme.Muted),
-                                  players.Count > 0 ? new StatusBox.Run(string.Join(", ", players), Theme.Text, true) : new StatusBox.Run(L.T("ninguém ainda", "nobody yet"), Theme.Muted) });
             // igual ao Host: quem esta conectado com voce no Radmin
             if (st != null && st.Peers.Count > 0 && st.PowerOn)
                 lines.Add(new[] { new StatusBox.Run(L.T("Amigos no Radmin: ", "Friends in Radmin: "), Theme.Muted), new StatusBox.Run(string.Join(", ", st.Peers), Theme.Text) });
             // so quando for o caso: versao do mod diferente da do host
             if (ModMismatch())
                 lines.Add(new[] { new StatusBox.Run("Mod: ", Theme.Muted), new StatusBox.Run(L.T("DIFERENTE do host", "DIFFERENT from host"), Theme.BloodText, true) });
+            // jogadores por ultimo
+            if (players != null)
+                lines.Add(new[] { new StatusBox.Run(L.T("Jogadores: ", "Players: "), Theme.Muted),
+                                  players.Count > 0 ? new StatusBox.Run(string.Join(", ", players), Theme.Text, true) : new StatusBox.Run(L.T("ninguém ainda", "nobody yet"), Theme.Muted) });
 
             status.Lines = lines;
-            // caixa do tamanho exato das linhas (sem espaco sobrando)
-            int hh = D(10) * 2 + status.LineH * lines.Count;
+            // caixa do tamanho exato das linhas (sem espaco sobrando); cresce quando a lista de nomes quebra
+            int hh = D(10) * 2 + status.LineH * status.Rows;
             if (status.Height != hh) Relayout(hh - status.Height);
             status.Invalidate();
 
